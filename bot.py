@@ -1,36 +1,108 @@
-import os
-import discord
-from discord.ext import commands
-from dotenv import load_dotenv
 
-# Load environment variables
-load_dotenv()
+require('dotenv').config();
+const { Client, GatewayIntentBits, SlashCommandBuilder } = require('discord.js');
+const { Rcon } = require('rcon-client');
 
-# Set up the bot
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+const client = new Client({ intents: [GatewayIntentBits.Guilds] });
 
-@bot.event
-async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
+async function sendRconCommand(command) {
+    const rcon = await Rcon.connect({
+        host: process.env.RCON_HOST,
+        port: process.env.RCON_PORT,
+        password: process.env.RCON_PASSWORD
+    });
 
-@bot.hybrid_command(name="ping", description="Replies with pong")
-async def ping(ctx):
-    await ctx.send('pong')
+    await rcon.send(command);
+    await rcon.end();
+}
 
-@bot.hybrid_command(name="hello", description="Says hello to the user")
-async def hello(ctx):
-    await ctx.send(f"Hello {ctx.author.name}! 😃")
+client.once('ready', async () => {
+    console.log(`✅ Bot connecté : ${client.user.tag}`);
 
-# Run the bot
-if __name__ == "__main__":
-    token = os.getenv('DISCORD_TOKEN')
-    if not token:
-        raise ValueError("No token found. Make sure DISCORD_TOKEN is set in your environment variables.")
-    bot.run(token)
+    const guild = await client.guilds.fetch(process.env.GUILD_ID);
+
+    const commands = [
+        new SlashCommandBuilder()
+            .setName('revive')
+            .setDescription('Revive un joueur')
+            .addIntegerOption(option =>
+                option.setName('id').setDescription('ID du joueur').setRequired(true)
+            ),
+
+        new SlashCommandBuilder()
+            .setName('heal')
+            .setDescription('Heal un joueur')
+            .addIntegerOption(option =>
+                option.setName('id').setDescription('ID du joueur').setRequired(true)
+            ),
+
+        new SlashCommandBuilder()
+            .setName('ban')
+            .setDescription('Ban un joueur')
+            .addIntegerOption(option =>
+                option.setName('id').setDescription('ID du joueur').setRequired(true)
+            )
+            .addStringOption(option =>
+                option.setName('raison').setDescription('Raison du ban').setRequired(true)
+            ),
+
+        new SlashCommandBuilder()
+            .setName('givecoins')
+            .setDescription('Donner des coins à un joueur')
+            .addIntegerOption(option =>
+                option.setName('id').setDescription('ID du joueur').setRequired(true)
+            )
+            .addIntegerOption(option =>
+                option.setName('amount').setDescription('Montant').setRequired(true)
+            )
+    ];
+
+    for (const command of commands) {
+        await guild.commands.create(command);
+    }
+
+    console.log("✅ Commandes Slash enregistrées !");
+});
+
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
+
+    if (interaction.user.id !== process.env.ALLOWED_DISCORD_ID) {
+        return interaction.reply({ content: "❌ Pas autorisé.", ephemeral: true });
+    }
+
+    try {
+        if (interaction.commandName === 'revive') {
+            const id = interaction.options.getInteger('id');
+            await sendRconCommand(`revive ${id}`);
+            await interaction.reply(`✅ Joueur ${id} revive.`);
+        }
+
+        if (interaction.commandName === 'heal') {
+            const id = interaction.options.getInteger('id');
+            await sendRconCommand(`heal ${id}`);
+            await interaction.reply(`✅ Joueur ${id} heal.`);
+        }
+
+        if (interaction.commandName === 'ban') {
+            const id = interaction.options.getInteger('id');
+            const reason = interaction.options.getString('raison');
+            await sendRconCommand(`ban ${id} ${reason}`);
+            await interaction.reply(`🚫 Joueur ${id} banni. Raison: ${reason}`);
+        }
+
+        if (interaction.commandName === 'givecoins') {
+            const id = interaction.options.getInteger('id');
+            const amount = interaction.options.getInteger('amount');
+            await sendRconCommand(`givecoins ${id} ${amount}`);
+            await interaction.reply(`💰 ${amount} coins donnés au joueur ${id}.`);
+        }
+
+    } catch (err) {
+        console.error(err);
+        await interaction.reply("❌ Erreur lors de l'exécution.");
+    }
+});
+
+client.login(process.env.DISCORD_TOKEN);
+
