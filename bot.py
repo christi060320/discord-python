@@ -1,36 +1,75 @@
-import os
-import discord
-from discord.ext import commands
-from dotenv import load_dotenv
+import websocket
+import json
+import threading
+import time
 
-# Load environment variables
-load_dotenv()
+BOT_TOKEN = "REMPLACE_PAR_TON_TOKEN"
 
-# Set up the bot
-intents = discord.Intents.default()
-intents.message_content = True
-bot = commands.Bot(command_prefix='!', intents=intents)
+IDENTIFY = {
+    "op": 2,
+    "d": {
+        "token": BOT_TOKEN,
+        "intents": 0,
+        "properties": {
+            "os": "linux",
+            "browser": "SydneyRP",
+            "device": "SydneyRP"
+        },
+        "presence": {
+            "status": "online",
+            "activities": [{"name": "🎮 Sydney RP", "type": 0}],
+            "since": None,
+            "afk": False
+        }
+    }
+}
 
-@bot.event
-async def on_ready():
-    print(f'{bot.user} has connected to Discord!')
-    try:
-        synced = await bot.tree.sync()
-        print(f"Synced {len(synced)} command(s)")
-    except Exception as e:
-        print(f"Failed to sync commands: {e}")
+heartbeat_interval = None
+sequence = None
 
-@bot.hybrid_command(name="ping", description="Replies with pong")
-async def ping(ctx):
-    await ctx.send('pong')
+def send_heartbeat(ws):
+    global sequence
+    while True:
+        if heartbeat_interval:
+            time.sleep(heartbeat_interval / 1000)
+            try:
+                ws.send(json.dumps({"op": 1, "d": sequence}))
+                print(f"💓 Heartbeat (seq: {sequence})")
+            except:
+                break
 
-@bot.hybrid_command(name="hello", description="Says hello to the user")
-async def hello(ctx):
-    await ctx.send(f"Hello {ctx.author.name}! 😃")
+def on_message(ws, message):
+    global heartbeat_interval, sequence
+    data = json.loads(message)
+    op = data.get("op")
+    if data.get("s"):
+        sequence = data["s"]
+    if op == 10:
+        heartbeat_interval = data["d"]["heartbeat_interval"]
+        threading.Thread(target=send_heartbeat, args=(ws,), daemon=True).start()
+        ws.send(json.dumps(IDENTIFY))
+    elif op == 0 and data.get("t") == "READY":
+        print(f"🟢 Bot EN LIGNE : {data['d']['user']['username']}")
+    elif op == 9:
+        time.sleep(5)
+        connect()
 
-# Run the bot
-if __name__ == "__main__":
-    token = os.getenv('DISCORD_TOKEN')
-    if not token:
-        raise ValueError("No token found. Make sure DISCORD_TOKEN is set in your environment variables.")
-    bot.run(token)
+def on_close(ws, *args):
+    print("🔴 Déconnecté — Reconnexion...")
+    time.sleep(5)
+    connect()
+
+def on_error(ws, error):
+    print(f"❌ Erreur: {error}")
+
+def connect():
+    ws = websocket.WebSocketApp(
+        "wss://gateway.discord.gg/?v=10&encoding=json",
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close
+    )
+    ws.run_forever()
+
+print("🚀 Démarrage Gateway Sydney RP...")
+connect()
